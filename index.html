@@ -1,0 +1,698 @@
+<!DOCTYPE html>
+<html lang="es">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>SuriQuirófano | Seguimiento de Alumnos</title>
+    
+    <!-- Tailwind CSS para estilos rápidos y responsive -->
+    <script src="https://cdn.tailwindcss.com"></script>
+    
+    <!-- Chart.js para visualización de datos -->
+    <script src="https://cdn.jsdelivr.net/npm/chart.js"></script>
+    
+    <!-- FontAwesome para iconos -->
+    <link rel="stylesheet" href="https://cdnjs.cloudflare.com/ajax/libs/font-awesome/6.4.0/css/all.min.css">
+
+    <!-- Configuración de colores de la marca -->
+    <script>
+        tailwind.config = {
+            theme: {
+                extend: {
+                    colors: {
+                        medical: {
+                            50: '#f0fdfa',
+                            100: '#ccfbf1',
+                            500: '#14b8a6', // Teal principal
+                            600: '#0d9488',
+                            700: '#0f766e',
+                            800: '#115e59',
+                            900: '#134e4a',
+                        }
+                    }
+                }
+            }
+        }
+    </script>
+
+    <style>
+        /* Estilos base y transiciones */
+        body { font-family: 'Segoe UI', Tahoma, Geneva, Verdana, sans-serif; background-color: #f8fafc; }
+        .fade-in { animation: fadeIn 0.3s ease-in-out; }
+        @keyframes fadeIn { from { opacity: 0; transform: translateY(10px); } to { opacity: 1; transform: translateY(0); } }
+        
+        /* Personalización de inputs tipo rango */
+        input[type=range]::-webkit-slider-thumb {
+            -webkit-appearance: none;
+            height: 16px;
+            width: 16px;
+            border-radius: 50%;
+            background: #0d9488;
+            cursor: pointer;
+            margin-top: -6px;
+        }
+        input[type=range]::-webkit-slider-runnable-track {
+            width: 100%;
+            height: 4px;
+            cursor: pointer;
+            background: #ccfbf1;
+            border-radius: 2px;
+        }
+    </style>
+</head>
+<body class="text-slate-700 h-screen flex flex-col overflow-hidden">
+
+    <!-- HEADER / BARRA DE NAVEGACIÓN -->
+    <nav class="bg-white border-b border-slate-200 shadow-sm z-10">
+        <div class="max-w-7xl mx-auto px-4 sm:px-6 lg:px-8">
+            <div class="flex justify-between h-16">
+                <div class="flex items-center cursor-pointer" onclick="app.renderDashboard()">
+                    <i class="fa-solid fa-heart-pulse text-medical-600 text-2xl mr-3"></i>
+                    <span class="font-bold text-xl text-slate-800 tracking-tight">Suri<span class="text-medical-600">Quirófano</span></span>
+                </div>
+                
+                <!-- Selector de Rol -->
+                <div class="flex items-center space-x-4">
+                    <span class="text-sm text-slate-500 hidden sm:block">Modo actual:</span>
+                    <select id="roleSelector" onchange="app.setRole(this.value)" class="bg-slate-50 border border-slate-300 text-slate-900 text-sm rounded-lg focus:ring-medical-500 focus:border-medical-500 block p-2">
+                        <option value="Docente">🎓 Docente</option>
+                        <option value="Enfermería">🏥 Enfermería</option>
+                    </select>
+                </div>
+            </div>
+        </div>
+    </nav>
+
+    <!-- CONTENEDOR PRINCIPAL CON SCROLL -->
+    <main class="flex-1 overflow-y-auto bg-slate-50 p-4 sm:p-8" id="mainContent">
+        <!-- El contenido se inyectará aquí dinámicamente -->
+    </main>
+
+    <!-- MODAL (Oculto por defecto) -->
+    <div id="modalOverlay" class="fixed inset-0 bg-slate-900 bg-opacity-50 hidden items-center justify-center z-50 backdrop-blur-sm transition-opacity">
+        <div class="bg-white rounded-xl shadow-2xl w-full max-w-2xl mx-4 overflow-hidden transform transition-all scale-100">
+            <div class="bg-medical-600 px-6 py-4 flex justify-between items-center">
+                <h3 class="text-white font-semibold text-lg" id="modalTitle">Título Modal</h3>
+                <button onclick="app.closeModal()" class="text-medical-100 hover:text-white transition">
+                    <i class="fa-solid fa-times text-xl"></i>
+                </button>
+            </div>
+            <div class="p-6 max-h-[80vh] overflow-y-auto" id="modalContent">
+                <!-- Formulario dinámico -->
+            </div>
+        </div>
+    </div>
+
+    <!-- JAVASCRIPT LOGIC -->
+    <script>
+        /**
+         * LÓGICA DE LA APLICACIÓN
+         * Patrón Modular simple para encapsular la lógica.
+         */
+        const app = (() => {
+            // Estado de la aplicación
+            const state = {
+                students: [],
+                currentUserRole: 'Docente', // Por defecto
+                currentStudentId: null,
+                chartInstance: null
+            };
+
+            // Criterios de evaluación definidos
+            const criteriaList = [
+                { key: 'asepsia', label: 'Asepsia y Antisepsia' },
+                { key: 'area', label: 'Conocimiento Área Quirúrgica' },
+                { key: 'instrumentacion', label: 'Instrumentación Quirúrgica' },
+                { key: 'seguridad', label: 'Seguridad del Paciente' },
+                { key: 'equipo', label: 'Trabajo en Equipo y Comunicación' },
+                { key: 'etica', label: 'Responsabilidad y Ética' },
+                { key: 'autonomia', label: 'Autonomía Progresiva' }
+            ];
+
+            // --- GESTIÓN DE DATOS ---
+
+            function init() {
+                loadData();
+                renderDashboard();
+                
+                // Si no hay datos, cargar datos de ejemplo
+                if (state.students.length === 0) {
+                    loadMockData();
+                }
+            }
+
+            function loadData() {
+                const stored = localStorage.getItem('suri_students');
+                if (stored) {
+                    state.students = JSON.parse(stored);
+                }
+            }
+
+            function saveData() {
+                localStorage.setItem('suri_students', JSON.stringify(state.students));
+            }
+
+            function loadMockData() {
+                const today = new Date();
+                const pastDate = new Date();
+                pastDate.setDate(today.getDate() - 15);
+
+                const mockStudents = [
+                    {
+                        id: 'ALU-001',
+                        name: 'Ana García López',
+                        dni: '12345678A',
+                        course: 'Prácticas II',
+                        startDate: '2023-09-01',
+                        evaluations: [
+                            {
+                                id: 1,
+                                date: pastDate.toISOString().split('T')[0],
+                                evaluator: 'Docente',
+                                evaluatorName: 'Dr. Martínez',
+                                scores: { asepsia: 5, area: 6, instrumentacion: 4, seguridad: 7, equipo: 8, etica: 9, autonomia: 4 },
+                                average: 6.1,
+                                observations: 'Inicio titubeante, buena actitud.'
+                            },
+                            {
+                                id: 2,
+                                date: today.toISOString().split('T')[0],
+                                evaluator: 'Enfermería',
+                                evaluatorName: 'Enf. Ruiz',
+                                scores: { asepsia: 8, area: 8, instrumentacion: 7, seguridad: 8, equipo: 9, etica: 9, autonomia: 6 },
+                                average: 7.9,
+                                observations: 'Mejora notable en técnica estéril.'
+                            }
+                        ]
+                    },
+                    {
+                        id: 'ALU-002',
+                        name: 'Carlos Méndez',
+                        dni: '87654321B',
+                        course: 'Prácticas I',
+                        startDate: '2023-09-15',
+                        evaluations: []
+                    }
+                ];
+                state.students = mockStudents;
+                saveData();
+                renderDashboard();
+            }
+
+            function setRole(role) {
+                state.currentUserRole = role;
+                // Refrescar la vista actual para actualizar permisos si fuera necesario
+                if (state.currentStudentId) {
+                    renderStudentDetail(state.currentStudentId);
+                } else {
+                    renderDashboard();
+                }
+            }
+
+            // --- VISTAS ---
+
+            function renderDashboard() {
+                state.currentStudentId = null;
+                const container = document.getElementById('mainContent');
+                
+                // Cálculo de promedios generales para la lista
+                const studentsWithAvg = state.students.map(s => {
+                    if (s.evaluations.length === 0) return { ...s, globalAvg: '-' };
+                    const sum = s.evaluations.reduce((acc, curr) => acc + curr.average, 0);
+                    return { ...s, globalAvg: (sum / s.evaluations.length).toFixed(1) };
+                });
+
+                container.innerHTML = `
+                    <div class="max-w-7xl mx-auto fade-in">
+                        <div class="flex justify-between items-center mb-8">
+                            <div>
+                                <h1 class="text-3xl font-bold text-slate-800">Panel de Seguimiento</h1>
+                                <p class="text-slate-500 mt-1">Gestión de evolución de alumnos en prácticas</p>
+                            </div>
+                            ${state.currentUserRole === 'Docente' ? `
+                                <button onclick="app.openNewStudentModal()" class="bg-medical-600 hover:bg-medical-700 text-white px-5 py-2.5 rounded-lg shadow-md transition flex items-center gap-2">
+                                    <i class="fa-solid fa-user-plus"></i> Nuevo Alumno
+                                </button>
+                            ` : ''}
+                        </div>
+
+                        <!-- Grid de Estadísticas Rápidas -->
+                        <div class="grid grid-cols-1 md:grid-cols-3 gap-6 mb-8">
+                            <div class="bg-white p-6 rounded-xl shadow-sm border border-slate-100">
+                                <div class="text-slate-400 text-sm font-medium uppercase">Total Alumnos</div>
+                                <div class="text-3xl font-bold text-slate-800 mt-2">${state.students.length}</div>
+                            </div>
+                            <div class="bg-white p-6 rounded-xl shadow-sm border border-slate-100">
+                                <div class="text-slate-400 text-sm font-medium uppercase">Evaluaciones Realizadas</div>
+                                <div class="text-3xl font-bold text-medical-600 mt-2">
+                                    ${state.students.reduce((acc, s) => acc + s.evaluations.length, 0)}
+                                </div>
+                            </div>
+                        </div>
+
+                        <!-- Lista de Alumnos -->
+                        <div class="bg-white rounded-xl shadow-sm border border-slate-200 overflow-hidden">
+                            <table class="w-full text-left border-collapse">
+                                <thead class="bg-slate-50 text-slate-500 uppercase text-xs font-semibold">
+                                    <tr>
+                                        <th class="p-5 border-b border-slate-200">Alumno</th>
+                                        <th class="p-5 border-b border-slate-200 hidden sm:table-cell">Curso</th>
+                                        <th class="p-5 border-b border-slate-200">Evaluaciones</th>
+                                        <th class="p-5 border-b border-slate-200">Promedio Global</th>
+                                        <th class="p-5 border-b border-slate-200 text-right">Acción</th>
+                                    </tr>
+                                </thead>
+                                <tbody class="divide-y divide-slate-100">
+                                    ${studentsWithAvg.length === 0 ? `
+                                        <tr><td colspan="5" class="p-8 text-center text-slate-400">No hay alumnos registrados.</td></tr>
+                                    ` : studentsWithAvg.map(student => `
+                                        <tr class="hover:bg-slate-50 transition cursor-pointer" onclick="app.renderStudentDetail('${student.id}')">
+                                            <td class="p-5">
+                                                <div class="font-semibold text-slate-800">${student.name}</div>
+                                                <div class="text-xs text-slate-400">ID: ${student.dni}</div>
+                                            </td>
+                                            <td class="p-5 hidden sm:table-cell text-slate-600">${student.course}</td>
+                                            <td class="p-5">
+                                                <span class="bg-slate-100 text-slate-600 py-1 px-3 rounded-full text-xs font-bold">
+                                                    ${student.evaluations.length}
+                                                </span>
+                                            </td>
+                                            <td class="p-5">
+                                                <span class="${getColorForScore(student.globalAvg)} font-bold">
+                                                    ${student.globalAvg}
+                                                </span>
+                                            </td>
+                                            <td class="p-5 text-right">
+                                                <button class="text-medical-600 hover:text-medical-800 font-medium text-sm">
+                                                    Ver Detalle <i class="fa-solid fa-chevron-right ml-1"></i>
+                                                </button>
+                                            </td>
+                                        </tr>
+                                    `).join('')}
+                                </tbody>
+                            </table>
+                        </div>
+                    </div>
+                `;
+            }
+
+            function renderStudentDetail(studentId) {
+                state.currentStudentId = studentId;
+                const student = state.students.find(s => s.id === studentId);
+                if (!student) return renderDashboard();
+
+                const container = document.getElementById('mainContent');
+
+                container.innerHTML = `
+                    <div class="max-w-7xl mx-auto fade-in pb-10">
+                        <!-- Breadcrumb -->
+                        <div class="flex items-center gap-2 text-sm text-slate-500 mb-6">
+                            <span class="cursor-pointer hover:text-medical-600" onclick="app.renderDashboard()">Dashboard</span>
+                            <i class="fa-solid fa-chevron-right text-xs"></i>
+                            <span class="text-slate-800 font-semibold">${student.name}</span>
+                        </div>
+
+                        <!-- Header Perfil -->
+                        <div class="bg-white rounded-xl p-6 shadow-sm border border-slate-200 mb-6 flex flex-col md:flex-row justify-between items-start md:items-center gap-4">
+                            <div class="flex items-center gap-4">
+                                <div class="w-16 h-16 bg-medical-50 rounded-full flex items-center justify-center text-medical-600 text-2xl font-bold border border-medical-100">
+                                    ${getInitials(student.name)}
+                                </div>
+                                <div>
+                                    <h2 class="text-2xl font-bold text-slate-800">${student.name}</h2>
+                                    <div class="text-slate-500 text-sm flex gap-4 mt-1">
+                                        <span><i class="fa-solid fa-id-card mr-1"></i> ${student.dni}</span>
+                                        <span><i class="fa-solid fa-graduation-cap mr-1"></i> ${student.course}</span>
+                                        <span class="hidden sm:inline"><i class="fa-regular fa-calendar mr-1"></i> Ingreso: ${formatDate(student.startDate)}</span>
+                                    </div>
+                                </div>
+                            </div>
+                            <button onclick="app.openNewEvaluationModal('${student.id}')" class="bg-medical-600 hover:bg-medical-700 text-white px-5 py-2.5 rounded-lg shadow-md transition flex items-center gap-2 w-full md:w-auto justify-center">
+                                <i class="fa-solid fa-clipboard-check"></i> Nueva Evaluación
+                            </button>
+                        </div>
+
+                        <div class="grid grid-cols-1 lg:grid-cols-3 gap-6">
+                            <!-- Columna Izquierda: Gráfico -->
+                            <div class="lg:col-span-2 space-y-6">
+                                <div class="bg-white p-6 rounded-xl shadow-sm border border-slate-200">
+                                    <h3 class="font-bold text-lg text-slate-800 mb-4 flex items-center gap-2">
+                                        <i class="fa-solid fa-chart-line text-medical-500"></i> Evolución Promedio General
+                                    </h3>
+                                    <div class="relative h-72 w-full">
+                                        <canvas id="evolutionChart"></canvas>
+                                    </div>
+                                    ${student.evaluations.length === 0 ? '<p class="text-center text-slate-400 mt-[-150px]">Aún no hay datos suficientes para mostrar la gráfica.</p>' : ''}
+                                </div>
+
+                                <!-- Historial -->
+                                <div class="bg-white rounded-xl shadow-sm border border-slate-200 overflow-hidden">
+                                    <div class="p-5 border-b border-slate-100">
+                                        <h3 class="font-bold text-lg text-slate-800">Historial de Evaluaciones</h3>
+                                    </div>
+                                    <div class="overflow-x-auto">
+                                        <table class="w-full text-sm text-left">
+                                            <thead class="bg-slate-50 text-slate-500 uppercase text-xs">
+                                                <tr>
+                                                    <th class="px-6 py-3">Fecha</th>
+                                                    <th class="px-6 py-3">Evaluador</th>
+                                                    <th class="px-6 py-3 text-center">Nota</th>
+                                                    <th class="px-6 py-3">Observaciones</th>
+                                                </tr>
+                                            </thead>
+                                            <tbody class="divide-y divide-slate-100">
+                                                ${student.evaluations.length === 0 ? '<tr><td colspan="4" class="p-6 text-center text-slate-400">Sin evaluaciones registradas</td></tr>' : 
+                                                student.evaluations.slice().reverse().map(ev => `
+                                                    <tr class="hover:bg-slate-50">
+                                                        <td class="px-6 py-4 whitespace-nowrap">${formatDate(ev.date)}</td>
+                                                        <td class="px-6 py-4">
+                                                            <div class="font-medium text-slate-700">${ev.evaluatorName || 'Desconocido'}</div>
+                                                            <span class="text-xs px-2 py-0.5 rounded-full ${ev.evaluator === 'Docente' ? 'bg-blue-100 text-blue-700' : 'bg-green-100 text-green-700'}">
+                                                                ${ev.evaluator}
+                                                            </span>
+                                                        </td>
+                                                        <td class="px-6 py-4 text-center">
+                                                            <span class="text-base font-bold ${getColorForScore(ev.average)}">${ev.average.toFixed(1)}</span>
+                                                        </td>
+                                                        <td class="px-6 py-4 text-slate-600 italic truncate max-w-xs" title="${ev.observations}">
+                                                            ${ev.observations || '-'}
+                                                        </td>
+                                                    </tr>
+                                                `).join('')}
+                                            </tbody>
+                                        </table>
+                                    </div>
+                                </div>
+                            </div>
+
+                            <!-- Columna Derecha: Última Evaluación Detallada -->
+                            <div class="space-y-6">
+                                <div class="bg-white p-6 rounded-xl shadow-sm border border-slate-200 h-full">
+                                    <h3 class="font-bold text-lg text-slate-800 mb-4">Último Desempeño</h3>
+                                    ${student.evaluations.length > 0 ? (() => {
+                                        const last = student.evaluations[student.evaluations.length - 1];
+                                        return `
+                                            <div class="space-y-4">
+                                                ${criteriaList.map(c => `
+                                                    <div>
+                                                        <div class="flex justify-between text-sm mb-1">
+                                                            <span class="text-slate-600">${c.label}</span>
+                                                            <span class="font-bold ${getColorForScore(last.scores[c.key])}">${last.scores[c.key]}</span>
+                                                        </div>
+                                                        <div class="w-full bg-slate-100 rounded-full h-2">
+                                                            <div class="h-2 rounded-full ${getBarColor(last.scores[c.key])}" style="width: ${last.scores[c.key] * 10}%"></div>
+                                                        </div>
+                                                    </div>
+                                                `).join('')}
+                                                <div class="mt-6 pt-4 border-t border-slate-100">
+                                                    <p class="text-xs uppercase text-slate-400 font-bold mb-1">Observaciones</p>
+                                                    <p class="text-sm text-slate-600 bg-yellow-50 p-3 rounded-lg border border-yellow-100">
+                                                        "${last.observations || 'Sin observaciones.'}"
+                                                    </p>
+                                                </div>
+                                            </div>
+                                        `;
+                                    })() : '<p class="text-slate-400 text-sm">Realiza una evaluación para ver el desglose de competencias.</p>'}
+                                </div>
+                            </div>
+                        </div>
+                    </div>
+                `;
+
+                renderChart(student);
+            }
+
+            // --- GRÁFICOS ---
+
+            function renderChart(student) {
+                if (student.evaluations.length === 0) return;
+
+                const ctx = document.getElementById('evolutionChart').getContext('2d');
+                
+                // Preparar datos
+                const labels = student.evaluations.map(e => formatDate(e.date, true));
+                const dataPoints = student.evaluations.map(e => e.average);
+
+                if (state.chartInstance) {
+                    state.chartInstance.destroy();
+                }
+
+                state.chartInstance = new Chart(ctx, {
+                    type: 'line',
+                    data: {
+                        labels: labels,
+                        datasets: [{
+                            label: 'Promedio General',
+                            data: dataPoints,
+                            borderColor: '#0d9488', // medical-600
+                            backgroundColor: 'rgba(13, 148, 136, 0.1)',
+                            borderWidth: 2,
+                            pointBackgroundColor: '#fff',
+                            pointBorderColor: '#0f766e',
+                            pointRadius: 5,
+                            pointHoverRadius: 7,
+                            fill: true,
+                            tension: 0.3 // Curva suave
+                        }]
+                    },
+                    options: {
+                        responsive: true,
+                        maintainAspectRatio: false,
+                        scales: {
+                            y: {
+                                min: 0,
+                                max: 10,
+                                grid: { borderDash: [5, 5], color: '#f1f5f9' }
+                            },
+                            x: {
+                                grid: { display: false }
+                            }
+                        },
+                        plugins: {
+                            legend: { display: false },
+                            tooltip: {
+                                callbacks: {
+                                    label: function(context) {
+                                        return `Nota: ${context.parsed.y}`;
+                                    }
+                                }
+                            }
+                        }
+                    }
+                });
+            }
+
+            // --- MODALES Y FORMULARIOS ---
+
+            function closeModal() {
+                const modal = document.getElementById('modalOverlay');
+                modal.classList.add('hidden');
+                modal.classList.remove('flex');
+            }
+
+            function openModal(title, htmlContent) {
+                const modal = document.getElementById('modalOverlay');
+                document.getElementById('modalTitle').innerText = title;
+                document.getElementById('modalContent').innerHTML = htmlContent;
+                modal.classList.remove('hidden');
+                modal.classList.add('flex');
+            }
+
+            function openNewStudentModal() {
+                const formHtml = `
+                    <form onsubmit="app.handleAddStudent(event)" class="space-y-4">
+                        <div class="grid grid-cols-1 md:grid-cols-2 gap-4">
+                            <div>
+                                <label class="block text-sm font-medium text-slate-700 mb-1">Nombre Completo</label>
+                                <input type="text" name="name" required class="w-full border-slate-300 rounded-lg p-2.5 border focus:ring-medical-500 focus:border-medical-500 outline-none">
+                            </div>
+                            <div>
+                                <label class="block text-sm font-medium text-slate-700 mb-1">DNI / ID</label>
+                                <input type="text" name="dni" required class="w-full border-slate-300 rounded-lg p-2.5 border focus:ring-medical-500 focus:border-medical-500 outline-none">
+                            </div>
+                        </div>
+                        <div class="grid grid-cols-1 md:grid-cols-2 gap-4">
+                            <div>
+                                <label class="block text-sm font-medium text-slate-700 mb-1">Curso / Ciclo</label>
+                                <select name="course" class="w-full border-slate-300 rounded-lg p-2.5 border focus:ring-medical-500 focus:border-medical-500 outline-none">
+                                    <option>Prácticas I</option>
+                                    <option>Prácticas II</option>
+                                    <option>Residencia</option>
+                                </select>
+                            </div>
+                            <div>
+                                <label class="block text-sm font-medium text-slate-700 mb-1">Fecha de Ingreso</label>
+                                <input type="date" name="startDate" required class="w-full border-slate-300 rounded-lg p-2.5 border focus:ring-medical-500 focus:border-medical-500 outline-none">
+                            </div>
+                        </div>
+                        <div class="pt-4 flex justify-end gap-3">
+                            <button type="button" onclick="app.closeModal()" class="px-4 py-2 text-slate-600 hover:bg-slate-100 rounded-lg transition">Cancelar</button>
+                            <button type="submit" class="px-6 py-2 bg-medical-600 hover:bg-medical-700 text-white rounded-lg font-medium transition shadow-sm">Guardar Alumno</button>
+                        </div>
+                    </form>
+                `;
+                openModal('Registrar Nuevo Alumno', formHtml);
+            }
+
+            function handleAddStudent(e) {
+                e.preventDefault();
+                const formData = new FormData(e.target);
+                const newStudent = {
+                    id: 'ALU-' + Date.now().toString().slice(-6),
+                    name: formData.get('name'),
+                    dni: formData.get('dni'),
+                    course: formData.get('course'),
+                    startDate: formData.get('startDate'),
+                    evaluations: []
+                };
+                
+                state.students.push(newStudent);
+                saveData();
+                closeModal();
+                renderDashboard();
+            }
+
+            function openNewEvaluationModal(studentId) {
+                // Generar campos para cada criterio dinámicamente
+                const criteriaInputs = criteriaList.map(c => `
+                    <div class="mb-4">
+                        <div class="flex justify-between items-center mb-1">
+                            <label class="text-sm font-medium text-slate-700">${c.label}</label>
+                            <span class="text-lg font-bold text-medical-600" id="val-${c.key}">5</span>
+                        </div>
+                        <input type="range" name="${c.key}" min="1" max="10" value="5" 
+                            class="w-full h-2 bg-slate-200 rounded-lg appearance-none cursor-pointer"
+                            oninput="document.getElementById('val-${c.key}').innerText = this.value">
+                        <div class="flex justify-between text-xs text-slate-400 mt-1">
+                            <span>Crítico</span>
+                            <span>Excelente</span>
+                        </div>
+                    </div>
+                `).join('');
+
+                const formHtml = `
+                    <form onsubmit="app.handleAddEvaluation(event, '${studentId}')">
+                        <div class="grid grid-cols-1 md:grid-cols-2 gap-6">
+                            <!-- Metadatos -->
+                            <div class="bg-slate-50 p-4 rounded-lg h-fit">
+                                <h4 class="font-bold text-slate-700 mb-3 border-b pb-2">Datos Generales</h4>
+                                <div class="mb-3">
+                                    <label class="block text-xs font-bold text-slate-500 uppercase mb-1">Fecha</label>
+                                    <input type="date" name="date" required value="${new Date().toISOString().split('T')[0]}" class="w-full border-slate-300 rounded p-2 text-sm">
+                                </div>
+                                <div class="mb-3">
+                                    <label class="block text-xs font-bold text-slate-500 uppercase mb-1">Evaluador</label>
+                                    <input type="text" value="${state.currentUserRole}" disabled class="w-full bg-slate-200 text-slate-500 rounded p-2 text-sm border border-slate-300">
+                                </div>
+                                <div class="mb-3">
+                                    <label class="block text-xs font-bold text-slate-500 uppercase mb-1">Nombre Evaluador</label>
+                                    <input type="text" name="evaluatorName" placeholder="Tu nombre" required class="w-full border-slate-300 rounded p-2 text-sm">
+                                </div>
+                                <div>
+                                    <label class="block text-xs font-bold text-slate-500 uppercase mb-1">Observaciones</label>
+                                    <textarea name="observations" rows="4" class="w-full border-slate-300 rounded p-2 text-sm" placeholder="Comentarios cualitativos..."></textarea>
+                                </div>
+                            </div>
+                            
+                            <!-- Criterios -->
+                            <div>
+                                <h4 class="font-bold text-slate-700 mb-3 border-b pb-2">Rúbrica (1-10)</h4>
+                                <div class="max-h-[400px] overflow-y-auto pr-2 custom-scrollbar">
+                                    ${criteriaInputs}
+                                </div>
+                            </div>
+                        </div>
+
+                        <div class="pt-6 flex justify-end gap-3 border-t mt-4">
+                            <button type="button" onclick="app.closeModal()" class="px-4 py-2 text-slate-600 hover:bg-slate-100 rounded-lg transition">Cancelar</button>
+                            <button type="submit" class="px-6 py-2 bg-medical-600 hover:bg-medical-700 text-white rounded-lg font-medium transition shadow-sm">Guardar Evaluación</button>
+                        </div>
+                    </form>
+                `;
+                openModal('Nueva Evaluación de Prácticas', formHtml);
+            }
+
+            function handleAddEvaluation(e, studentId) {
+                e.preventDefault();
+                const form = e.target;
+                const formData = new FormData(form);
+                
+                // Recopilar puntajes
+                const scores = {};
+                let sum = 0;
+                criteriaList.forEach(c => {
+                    const val = parseInt(formData.get(c.key));
+                    scores[c.key] = val;
+                    sum += val;
+                });
+
+                const average = sum / criteriaList.length;
+
+                const newEval = {
+                    id: Date.now(),
+                    date: formData.get('date'),
+                    evaluator: state.currentUserRole,
+                    evaluatorName: formData.get('evaluatorName'),
+                    scores: scores,
+                    average: average,
+                    observations: formData.get('observations')
+                };
+
+                // Encontrar alumno y agregar
+                const studentIndex = state.students.findIndex(s => s.id === studentId);
+                if (studentIndex !== -1) {
+                    state.students[studentIndex].evaluations.push(newEval);
+                    saveData();
+                    closeModal();
+                    renderStudentDetail(studentId); // Refrescar vista
+                }
+            }
+
+            // --- UTILIDADES ---
+
+            function getColorForScore(score) {
+                if (score === '-') return 'text-slate-400';
+                if (score >= 9) return 'text-green-600';
+                if (score >= 7) return 'text-teal-600';
+                if (score >= 5) return 'text-yellow-600';
+                return 'text-red-500';
+            }
+
+            function getBarColor(score) {
+                if (score >= 9) return 'bg-green-500';
+                if (score >= 7) return 'bg-teal-500';
+                if (score >= 5) return 'bg-yellow-500';
+                return 'bg-red-500';
+            }
+
+            function formatDate(dateString, short = false) {
+                const options = short 
+                    ? { day: '2-digit', month: '2-digit' }
+                    : { year: 'numeric', month: 'long', day: 'numeric' };
+                return new Date(dateString).toLocaleDateString('es-ES', options);
+            }
+
+            function getInitials(name) {
+                return name.split(' ').map(n => n[0]).join('').substring(0, 2).toUpperCase();
+            }
+
+            // Exponer métodos públicos para usar en el HTML
+            return {
+                init,
+                setRole,
+                renderDashboard,
+                renderStudentDetail,
+                openNewStudentModal,
+                handleAddStudent,
+                openNewEvaluationModal,
+                handleAddEvaluation,
+                closeModal
+            };
+        })();
+
+        // Iniciar la aplicación cuando cargue el DOM
+        document.addEventListener('DOMContentLoaded', app.init);
+
+    </script>
+</body>
+</html>
